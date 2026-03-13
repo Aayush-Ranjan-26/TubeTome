@@ -1,25 +1,24 @@
 /**
  * Playwright worker — creates a NotebookLM notebook and adds video URLs.
  *
- * Uses a PERSISTENT Chrome profile so Google login cookies survive between
- * sessions. After the first login, the user never needs to re-authenticate.
+ * Uses Chrome DevTools Protocol (CDP) to connect to the USER'S OWN Chrome
+ * browser. Since the user is already logged into Google in their Chrome,
+ * NotebookLM works immediately — NO separate login needed.
  *
- * Opens ONE Chrome window with ONE tab. Does NOT close it when done —
- * the user keeps the NotebookLM tab open.
+ * Opens a NEW TAB in the user's Chrome. Does NOT close it when done.
  *
  * FLOW:
- *   1. Launch Chrome with persistent profile (cookies already saved)
- *   2. Navigate to notebooklm.google.com
+ *   1. Connect to user's Chrome via CDP (or launch it with debug port)
+ *   2. Open new tab → notebooklm.google.com
  *   3. Click "+ Create notebook"
  *   4. Add all video URLs as sources
  *   5. Rename the notebook to playlist title
  *   6. Leave the tab open for the user
  */
-import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SELECTORS } from './selectors.js';
-import { CHROME_PROFILE_DIR, ensureProfileDir } from './auth.js';
+import { getConnectedBrowser } from './chrome_connection.js';
 
 const NOTEBOOK_LM_URL = 'https://notebooklm.google.com';
 const LOGS_DIR = path.resolve('logs', 'screenshots');
@@ -78,24 +77,18 @@ export async function createNotebookAndAddSources(playlistTitle, links = []) {
     console.log(`🚀 Starting automation: "${playlistTitle}" (${links.length} links)`);
     console.log('═══════════════════════════════════════\n');
 
-    // Ensure the persistent profile directory exists
-    const profileDir = ensureProfileDir();
-    console.log(`Using persistent Chrome profile: ${profileDir}`);
+    // Connect to user's real Chrome via CDP
+    const { browser, isOwned } = await getConnectedBrowser();
+    const context = browser.contexts()[0];
 
-    // Launch Chrome with PERSISTENT context — cookies survive between sessions!
-    const context = await chromium.launchPersistentContext(profileDir, {
-        channel: 'chrome',
-        headless: false,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-blink-features=AutomationControlled',
-        ],
-        ignoreDefaultArgs: ['--enable-automation'],
-    });
+    if (!context) {
+        const err = new Error('No browser context found. Please close Chrome and try again.');
+        err.code = 'CHROME_CONNECTION_FAIL';
+        throw err;
+    }
 
-    // Get the first page (persistent context opens one automatically)
-    let page = context.pages()[0] || await context.newPage();
+    // Open a NEW TAB in the user's Chrome
+    const page = await context.newPage();
 
     try {
         // ─── Step 1: Navigate to NotebookLM ───────────────────
@@ -103,13 +96,12 @@ export async function createNotebookAndAddSources(playlistTitle, links = []) {
         await page.goto(NOTEBOOK_LM_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
         console.log(`  Current URL: ${page.url()}`);
 
-        // Check if redirected to Google login
+        // Check if redirected to Google login (shouldn't happen — user's Chrome is logged in)
         const currentUrl = page.url();
         if (currentUrl.includes('accounts.google.com') || currentUrl.includes('signin')) {
-            console.log('  ⚠ Redirected to Google login — user needs to sign in.');
-            console.log('  Waiting for user to complete Google sign-in...');
+            console.log('  ⚠ Redirected to Google login — user may not be signed in to this Chrome.');
+            console.log('  Waiting for user to sign in (they should already be logged into Google)...');
 
-            // Wait up to 5 minutes for login
             for (let i = 0; i < 100; i++) {
                 await page.waitForTimeout(3000);
                 const url = page.url();
@@ -121,12 +113,11 @@ export async function createNotebookAndAddSources(playlistTitle, links = []) {
             }
         }
 
-        // Wait for the SPA to fully load — poll for up to 60 seconds
+        // Wait for the SPA to fully load
         console.log('  Waiting for NotebookLM SPA to finish loading...');
         let homeReady = false;
         for (let i = 0; i < 20; i++) {
             await page.waitForTimeout(3000);
-
             const hasContent = await page.evaluate(() => {
                 const body = document.body?.innerText || '';
                 return body.includes('Create') || body.includes('New notebook')
@@ -282,8 +273,7 @@ export async function createNotebookAndAddSources(playlistTitle, links = []) {
         // ─── Step 6: Done — leave the tab OPEN ────────────────
         const notebookUrl = page.url();
         console.log(`\n✓ Done! Notebook URL: ${notebookUrl}`);
-        console.log('✓ Chrome tab left open for the user.');
-        console.log('✓ Google cookies saved in persistent profile for next time.');
+        console.log('✓ Tab left open in your Chrome.');
 
         // DO NOT close browser or page — user keeps the tab
         return { notebookName: renamed ? playlistTitle : 'Untitled notebook', notebookUrl };
@@ -291,15 +281,14 @@ export async function createNotebookAndAddSources(playlistTitle, links = []) {
     } catch (err) {
         console.error(`\n✗ Worker error: ${err.message}`);
         if (page) await screenshot(page, 'worker-error');
-        // On error, close the browser so it doesn't hang
-        if (context) await context.close().catch(() => { });
+        // On error, close only the tab we opened (not the browser!)
+        if (page) await page.close().catch(() => { });
         throw err;
     }
 }
 
 /**
  * Run the worker with retry + exponential backoff.
- * No longer takes authPath — uses persistent profile automatically.
  */
 export async function runWithRetry(playlistTitle, links, maxRetries = 2) {
     let lastErr;

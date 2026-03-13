@@ -263,7 +263,6 @@ function ThreeBackground() {
    HELPERS
    ═══════════════════════════════════════════════════════ */
 const API = '/api';
-const AUTH = '/auth';
 
 async function copyText(text) {
     try { await navigator.clipboard.writeText(text); }
@@ -334,8 +333,6 @@ function filterVideos(mode, videos, specificInput = '', rangeStart = 1, rangeEnd
    ═══════════════════════════════════════════════════════ */
 export default function App() {
     const { user, profile, loading: authLoading, signIn, signOut, refreshSession } = useAuth();
-    const [authConfigured, setAuthConfigured] = useState(null);
-    const [loginLoading, setLoginLoading] = useState(false);
     const [playlistUrl, setPlaylistUrl] = useState('');
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState('');
@@ -358,7 +355,6 @@ export default function App() {
     const [selectionWarnings, setSelectionWarnings] = useState([]);
 
     const headerRef = useRef(null);
-    const statusCardRef = useRef(null);
     const formRef = useRef(null);
     const resultsRef = useRef(null);
 
@@ -373,19 +369,11 @@ export default function App() {
         setSelectionWarnings(localWarnings);
     }, [localWarnings]);
 
-    useEffect(() => {
-        fetch(`${AUTH}/status`)
-            .then(r => r.json())
-            .then(d => setAuthConfigured(d.configured))
-            .catch(() => setAuthConfigured(false));
-    }, []);
-
     // Entrance animations
     useEffect(() => {
         if (headerRef.current) animate(headerRef.current, { opacity: [0, 1], translateY: [-30, 0], duration: 800, easing: 'easeOutExpo' });
-        if (statusCardRef.current) animate(statusCardRef.current, { opacity: [0, 1], translateX: [-50, 0], duration: 600, delay: 200, easing: 'easeOutExpo' });
         if (formRef.current) animate(formRef.current, { opacity: [0, 1], translateY: [30, 0], duration: 600, delay: 400, easing: 'easeOutExpo' });
-    }, [authConfigured]);
+    }, []);
 
     // Animate results
     useEffect(() => {
@@ -395,23 +383,7 @@ export default function App() {
         }
     }, [videos.length]);
 
-    const handleCreateSession = useCallback(async () => {
-        setLoginLoading(true); setError(''); setSuccess('');
-        try {
-            const r = await fetch(`${AUTH}/playwright-login`);
-            const d = await r.json().catch(() => null);
-            if (!r.ok || !d?.success) { setError(d?.message || `Login failed (HTTP ${r.status}).`); setLoginLoading(false); return; }
-            setSuccess(d.message);
-            const poll = setInterval(async () => {
-                try {
-                    const sr = await fetch(`${AUTH}/status`);
-                    const sd = await sr.json();
-                    if (sd.configured) { clearInterval(poll); setAuthConfigured(true); setSuccess('Automation session configured!'); setLoginLoading(false); }
-                } catch { }
-            }, 3000);
-            setTimeout(() => { clearInterval(poll); if (!authConfigured) setError('Login timed out. Try again.'); setLoginLoading(false); }, 300000);
-        } catch { setError('Could not connect to backend. Is it running on port 3001?'); setLoginLoading(false); }
-    }, [authConfigured]);
+
 
     // Supabase Google OAuth sign-in
     const handleSupabaseSignIn = useCallback(async () => {
@@ -489,7 +461,6 @@ export default function App() {
 
             if (!res.ok) {
                 const d = await res.json().catch(() => ({}));
-                if (d.code === 'AUTH_MISSING') setAuthConfigured(false);
                 if (d.warnings?.length > 0) setSelectionWarnings(d.warnings);
                 throw new Error(`Automation error: ${d.message || 'Failed or timed out.'}`);
             }
@@ -535,10 +506,7 @@ export default function App() {
         setTimeout(() => setCopiedIdx(-1), 1500);
     }, []);
 
-    const handleDeleteAuth = useCallback(async () => {
-        if (!window.confirm('Delete automation session? You will need to log in again.')) return;
-        await fetch(AUTH, { method: 'DELETE' }); setAuthConfigured(false); setSuccess('');
-    }, []);
+
 
     const toggleExpand = useCallback(() => {
         setPlaylistExpanded(prev => !prev);
@@ -566,7 +534,7 @@ export default function App() {
                     </div>
                 )}
 
-                {/* ── User Card (Supabase Auth) ── */}
+                {/* ── User Card ── */}
                 {user && (
                     <div className="card status-card glass user-card" style={{ opacity: 1 }}>
                         <div className="status-header">
@@ -579,9 +547,7 @@ export default function App() {
                         <p className="status-desc">
                             {user.email}
                             <button type="button" className="link-btn" style={{ marginLeft: 12 }} onClick={signOut}>Sign out</button>
-                            <button type="button" className="link-btn" style={{ marginLeft: 8 }} onClick={handleRefreshSession}>Refresh sign-in</button>
                         </p>
-                        <p className="status-hint">💡 Use the same Google account for NotebookLM to avoid re-login.</p>
                     </div>
                 )}
                 {!user && !authLoading && (
@@ -592,7 +558,7 @@ export default function App() {
                             <span className="badge badge-warn">Not signed in</span>
                         </div>
                         <div className="status-actions">
-                            <p className="status-desc">Sign in with Google to save your import history and persist your session.</p>
+                            <p className="status-desc">Sign in with Google to track your import history.</p>
                             <div className="login-buttons">
                                 <button type="button" className="btn-google" onClick={handleSupabaseSignIn}>
                                     <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.9 33.5 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.9z" /><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.3 15.5 18.8 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 16 4 9.2 8.3 6.3 14.7z" /><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5.1l-6.2-5.3C29.5 35.2 26.9 36 24 36c-5.3 0-9.8-3.5-11.3-8.3l-6.5 5C9.1 39.6 16 44 24 44z" /><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.6l6.2 5.3C36.7 39.6 44 34 44 24c0-1.3-.1-2.7-.4-3.9z" /></svg>
@@ -602,33 +568,6 @@ export default function App() {
                         </div>
                     </div>
                 )}
-
-                {/* ── Automation Status Card ── */}
-                <div className="card status-card glass" ref={statusCardRef}>
-                    <div className="status-header">
-                        <IconBot />
-                        <h3>Automation Status</h3>
-                        <span className={`badge ${authConfigured ? 'badge-ok' : 'badge-warn'}`}>
-                            {authConfigured === null ? 'Checking…' : authConfigured ? 'Configured' : 'Not configured'}
-                        </span>
-                    </div>
-                    {authConfigured ? (
-                        <p className="status-desc">
-                            Browser automation session is active. Cookies persist between imports.
-                            <button type="button" className="link-btn" onClick={handleDeleteAuth} style={{ marginLeft: 8 }}>Reset session</button>
-                        </p>
-                    ) : (
-                        <div className="status-actions">
-                            <p className="status-desc">Set up browser automation to import playlists into NotebookLM.</p>
-                            <div className="login-buttons">
-                                <button type="button" className="btn-google" onClick={handleCreateSession} disabled={loginLoading}>
-                                    <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.9 33.5 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.9z" /><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.3 15.5 18.8 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 16 4 9.2 8.3 6.3 14.7z" /><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5.1l-6.2-5.3C29.5 35.2 26.9 36 24 36c-5.3 0-9.8-3.5-11.3-8.3l-6.5 5C9.1 39.6 16 44 24 44z" /><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.6l6.2 5.3C36.7 39.6 44 34 44 24c0-1.3-.1-2.7-.4-3.9z" /></svg>
-                                    {loginLoading ? 'Waiting for login…' : 'Configure Automation'}
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
 
                 {/* ── Import Form ── */}
                 <form onSubmit={handleImport} className="card glass" ref={formRef}>
