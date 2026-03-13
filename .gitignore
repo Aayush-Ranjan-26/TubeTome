@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+frontend/dist/
+frontend/build/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Chrome persistent profile (contains cookies/auth data)
+backend/data/
+data/
+
+# Logs & screenshots
+logs/
+backend/logs/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Playwright
+playwright-report/
+test-results/
+
+# Legacy auth files
+auth.json.enc
+
+# Lock files (keep package-lock if you prefer)
+# package-lock.json
+
+# Gemini agent artifacts
+.gemini/
