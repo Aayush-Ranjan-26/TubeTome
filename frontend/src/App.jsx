@@ -427,13 +427,6 @@ export default function App() {
         } catch (err) { setError(`Session refresh failed: ${err.message}`); }
     }, [refreshSession]);
 
-    const handleImport = useCallback(async (e) => {
-        e.preventDefault();
-        setError(''); setSuccess(''); setVideos([]);
-        if (importMode === 'notebook' && !consentGiven) { setShowConsent(true); return; }
-        await runImport();
-    }, [playlistUrl, consentGiven, importMode, runImport]);
-
     const runImport = useCallback(async () => {
         try {
             setLoading(true); setError(''); setSelectionWarnings([]);
@@ -517,6 +510,13 @@ export default function App() {
         } finally { setLoading(false); setProgress(''); }
     }, [playlistUrl, videos.length, importMode, selectionMode, specificInput, rangeStart, rangeEnd, user]);
 
+    const handleImport = useCallback(async (e) => {
+        e.preventDefault();
+        setError(''); setSuccess(''); setVideos([]);
+        if (importMode === 'notebook' && !consentGiven) { setShowConsent(true); return; }
+        await runImport();
+    }, [playlistUrl, consentGiven, importMode, runImport]);
+
     const handleConsentAccept = useCallback(() => {
         localStorage.setItem('tubetome-consent', 'yes');
         setConsentGiven(true); setShowConsent(false); runImport();
@@ -568,7 +568,7 @@ export default function App() {
 
                 {/* ── User Card (Supabase Auth) ── */}
                 {user && (
-                    <div className="card status-card glass user-card">
+                    <div className="card status-card glass user-card" style={{ opacity: 1 }}>
                         <div className="status-header">
                             {profile?.avatar_url ? (
                                 <img src={profile.avatar_url} alt="" className="user-avatar" />
@@ -585,7 +585,7 @@ export default function App() {
                     </div>
                 )}
                 {!user && !authLoading && (
-                    <div className="card status-card glass">
+                    <div className="card status-card glass" style={{ opacity: 1 }}>
                         <div className="status-header">
                             <IconBot />
                             <h3>Sign In</h3>
