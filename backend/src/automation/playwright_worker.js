@@ -1,24 +1,26 @@
 /**
  * Playwright worker — creates a NotebookLM notebook and adds video URLs.
  *
- * Uses Chrome DevTools Protocol (CDP) to connect to the USER'S OWN Chrome
- * browser. Since the user is already logged into Google in their Chrome,
- * NotebookLM works immediately — NO separate login needed.
+ * Runs HEADLESS in the background using a persistent browser profile.
+ * User never sees a Chrome window during normal imports.
  *
- * Opens a NEW TAB in the user's Chrome. Does NOT close it when done.
+ * If not logged into Google, returns NEEDS_SETUP error so the frontend
+ * can prompt the user to run the one-time setup.
  *
  * FLOW:
- *   1. Connect to user's Chrome via CDP (or launch it with debug port)
- *   2. Open new tab → notebooklm.google.com
- *   3. Click "+ Create notebook"
- *   4. Add all video URLs as sources
- *   5. Rename the notebook to playlist title
- *   6. Leave the tab open for the user
+ *   1. Get headless context (persistent profile)
+ *   2. Open new page → notebooklm.google.com
+ *   3. If login redirect detected → fail with NEEDS_SETUP
+ *   4. Click "+ Create notebook"
+ *   5. Add all video URLs as sources
+ *   6. Rename the notebook to playlist title
+ *   7. Close the page (headless — user can't see it)
+ *   8. Return the notebook URL
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { SELECTORS } from './selectors.js';
-import { getConnectedBrowser } from './chrome_connection.js';
+import { getContext, close as closeBrowser } from './chrome_connection.js';
 
 const NOTEBOOK_LM_URL = 'https://notebooklm.google.com';
 const LOGS_DIR = path.resolve('logs', 'screenshots');
@@ -77,17 +79,8 @@ export async function createNotebookAndAddSources(playlistTitle, links = []) {
     console.log(`🚀 Starting automation: "${playlistTitle}" (${links.length} links)`);
     console.log('═══════════════════════════════════════\n');
 
-    // Connect to user's real Chrome via CDP
-    const { browser, isOwned } = await getConnectedBrowser();
-    const context = browser.contexts()[0];
-
-    if (!context) {
-        const err = new Error('No browser context found. Please close Chrome and try again.');
-        err.code = 'CHROME_CONNECTION_FAIL';
-        throw err;
-    }
-
-    // Open a NEW TAB in the user's Chrome
+    // Get headless persistent context (runs in background)
+    const context = await getContext(true);
     const page = await context.newPage();
 
     try {
@@ -96,21 +89,14 @@ export async function createNotebookAndAddSources(playlistTitle, links = []) {
         await page.goto(NOTEBOOK_LM_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
         console.log(`  Current URL: ${page.url()}`);
 
-        // Check if redirected to Google login (shouldn't happen — user's Chrome is logged in)
+        // Check if redirected to Google login
         const currentUrl = page.url();
         if (currentUrl.includes('accounts.google.com') || currentUrl.includes('signin')) {
-            console.log('  ⚠ Redirected to Google login — user may not be signed in to this Chrome.');
-            console.log('  Waiting for user to sign in (they should already be logged into Google)...');
-
-            for (let i = 0; i < 100; i++) {
-                await page.waitForTimeout(3000);
-                const url = page.url();
-                if (url.includes('notebooklm.google.com') && !url.includes('accounts.google.com')) {
-                    console.log('  ✓ Google sign-in completed!');
-                    break;
-                }
-                if (i % 10 === 0) console.log(`  … still waiting for login (${(i + 1) * 3}s)...`);
-            }
+            await page.close().catch(() => {});
+            await closeBrowser(); // close headless context
+            const err = new Error('Not logged into Google. Please click "Setup NotebookLM" first.');
+            err.code = 'NEEDS_SETUP';
+            throw err;
         }
 
         // Wait for the SPA to fully load
@@ -270,19 +256,17 @@ export async function createNotebookAndAddSources(playlistTitle, links = []) {
         await page.waitForTimeout(1000);
         await screenshot(page, 'step5-renamed');
 
-        // ─── Step 6: Done — leave the tab OPEN ────────────────
+        // ─── Step 6: Done — close the page (headless) ─────────
         const notebookUrl = page.url();
         console.log(`\n✓ Done! Notebook URL: ${notebookUrl}`);
-        console.log('✓ Tab left open in your Chrome.');
 
-        // DO NOT close browser or page — user keeps the tab
+        await page.close().catch(() => {});
         return { notebookName: renamed ? playlistTitle : 'Untitled notebook', notebookUrl };
 
     } catch (err) {
         console.error(`\n✗ Worker error: ${err.message}`);
         if (page) await screenshot(page, 'worker-error');
-        // On error, close only the tab we opened (not the browser!)
-        if (page) await page.close().catch(() => { });
+        if (page) await page.close().catch(() => {});
         throw err;
     }
 }
@@ -298,7 +282,8 @@ export async function runWithRetry(playlistTitle, links, maxRetries = 2) {
             return await createNotebookAndAddSources(playlistTitle, links);
         } catch (err) {
             lastErr = err;
-            if (err.code === 'UI_SELECTOR_FAIL') throw err;
+            // Don't retry NEEDS_SETUP or selector failures
+            if (err.code === 'UI_SELECTOR_FAIL' || err.code === 'NEEDS_SETUP') throw err;
             if (attempt < maxRetries) {
                 const delay = 2000 * attempt;
                 console.log(`  Retrying in ${delay / 1000}s...`);

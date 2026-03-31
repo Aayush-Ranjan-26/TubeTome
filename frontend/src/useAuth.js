@@ -25,7 +25,7 @@ export function useAuth() {
         try {
             const { data } = await supabase
                 .from('profiles')
-                .select('*')
+                .select('id, display_name, avatar_url')
                 .eq('id', userId)
                 .single();
             setProfile(data);

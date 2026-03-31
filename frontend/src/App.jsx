@@ -44,10 +44,6 @@ function TubeTomeLogo({ size = 48, className = '' }) {
             <line x1="55" y1="55" x2="78" y2="55" stroke="#330000" strokeWidth="1.5" strokeLinecap="round" />
             <circle cx="50" cy="45" r="18" fill="#ff0000" opacity="0.9" />
             <polygon points="44,36 44,54 60,45" fill="#000" />
-            <circle cx="50" cy="45" r="18" fill="none" stroke="#ff0000" strokeWidth="1" opacity="0.5">
-                <animate attributeName="r" values="18;22;18" dur="2s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="0.5;0.1;0.5" dur="2s" repeatCount="indefinite" />
-            </circle>
         </svg>
     );
 }
@@ -264,6 +260,22 @@ function ThreeBackground() {
    ═══════════════════════════════════════════════════════ */
 const API = '/api';
 
+/**
+ * Authenticated fetch: reads the current Supabase session and
+ * injects the access_token as a Bearer token.
+ */
+async function authFetch(path, opts = {}) {
+    const { data: { session } } = await (await import('./supabaseClient')).supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) throw new Error('You must be signed in to use this feature.');
+
+    const headers = { ...(opts.headers || {}) };
+    headers['Authorization'] = `Bearer ${token}`;
+    if (!headers['Content-Type'] && opts.body) headers['Content-Type'] = 'application/json';
+
+    return fetch(`${API}${path}`, { ...opts, headers });
+}
+
 async function copyText(text) {
     try { await navigator.clipboard.writeText(text); }
     catch {
@@ -272,6 +284,28 @@ async function copyText(text) {
         document.body.appendChild(ta); ta.select(); document.execCommand('copy');
         document.body.removeChild(ta);
     }
+}
+
+function Linkify({ text }) {
+    if (!text) return null;
+    const parts = text.split(/(https?:\/\/\S+)/g);
+    return parts.map((part, i) =>
+        i % 2 === 1
+            ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="toast-link">{part}</a>
+            : part
+    );
+}
+
+/** Strip internal details (file paths, stack frames) from error messages shown to users. */
+function sanitizeErrorForDisplay(msg) {
+    if (typeof msg !== 'string') return 'An unexpected error occurred.';
+    // Strip file system paths
+    let clean = msg.replace(/[A-Z]:\\[^\s]*/gi, '[internal]');
+    clean = clean.replace(/\/[^\s]*\.(js|ts|mjs)/gi, '[internal]');
+    // Strip stack trace lines
+    clean = clean.replace(/\s+at\s+.*/g, '');
+    // Cap length
+    return clean.substring(0, 300);
 }
 
 function filterVideos(mode, videos, specificInput = '', rangeStart = 1, rangeEnd = videos.length) {
@@ -296,8 +330,16 @@ function filterVideos(mode, videos, specificInput = '', rangeStart = 1, rangeEnd
         }
 
         if (dupes.length); // silently deduplicate, no warning needed
-        if (oob.length) warnings.push(`Out-of-range ignored: ${oob.join(', ')}`);
-        if (bad.length) warnings.push(`Invalid items ignored: ${bad.join(', ')}`);
+        if (oob.length) {
+            const preview = oob.slice(0, 5).join(', ');
+            const suffix = oob.length > 5 ? ` …and ${oob.length - 5} more` : '';
+            warnings.push(`${oob.length} out-of-range index${oob.length !== 1 ? 'es' : ''} ignored (${preview}${suffix}). Playlist has ${videos.length} videos.`);
+        }
+        if (bad.length) {
+            const preview = bad.slice(0, 5).join(', ');
+            const suffix = bad.length > 5 ? ` …and ${bad.length - 5} more` : '';
+            warnings.push(`${bad.length} invalid item${bad.length !== 1 ? 's' : ''} ignored (${preview}${suffix}).`);
+        }
         if (valid.length === 0 && tokens.length > 0) warnings.push(`No valid indices (playlist has ${videos.length} videos).`);
 
         return { filtered: valid.map(n => videos[n - 1]), warnings };
@@ -312,11 +354,11 @@ function filterVideos(mode, videos, specificInput = '', rangeStart = 1, rangeEnd
             [start, end] = [end, start];
         }
 
-        const clipped = [];
-        if (start < 1) { for (let i = start; i < 1; i++) clipped.push(i); start = 1; }
-        if (end > videos.length) { for (let i = videos.length + 1; i <= end; i++) clipped.push(i); end = videos.length; }
-
-        if (clipped.length) warnings.push(`Range clipped: indices ${clipped.join(', ')} ignored.`);
+        const origStart = start, origEnd = end;
+        start = Math.max(1, start);
+        end = Math.min(videos.length, end);
+        const clippedCount = Math.max(0, (origEnd - origStart + 1) - (end - start + 1));
+        if (clippedCount > 0) warnings.push(`Range clipped to ${start}\u2013${end} (${clippedCount} out-of-range index${clippedCount !== 1 ? 'es' : ''} ignored). Playlist has ${videos.length} videos.`);
         if (start > end) {
             warnings.push(`Range entirely outside playlist bounds.`);
             return { filtered: [], warnings };
@@ -347,12 +389,15 @@ export default function App() {
     );
     const [playlistExpanded, setPlaylistExpanded] = useState(false);
     const [importMode, setImportMode] = useState('notebook');
+    const [setupLoading, setSetupLoading] = useState(false);
+    const [needsSetup, setNeedsSetup] = useState(false);
     const [selectionMode, setSelectionMode] = useState('all');
     const [specificInput, setSpecificInput] = useState('');
-    const [rangeStart, setRangeStart] = useState(1);
-    const [rangeEnd, setRangeEnd] = useState(100);
+    const [rangeStart, setRangeStart] = useState('');
+    const [rangeEnd, setRangeEnd] = useState('');
 
     const [selectionWarnings, setSelectionWarnings] = useState([]);
+    const [warningsExpanded, setWarningsExpanded] = useState(false);
 
     const headerRef = useRef(null);
     const formRef = useRef(null);
@@ -360,13 +405,19 @@ export default function App() {
 
     const { selectedVideos, warnings: localWarnings } = useMemo(() => {
         if (videos.length === 0) return { selectedVideos: [], warnings: [] };
-        const { filtered, warnings } = filterVideos(selectionMode, videos, specificInput, rangeStart, rangeEnd);
+        if (selectionMode === 'range' && (rangeStart === '' || rangeEnd === '')) {
+            return { selectedVideos: [], warnings: [] };
+        }
+        const rStart = selectionMode === 'range' ? (parseInt(rangeStart, 10) || 0) : 1;
+        const rEnd = selectionMode === 'range' ? (parseInt(rangeEnd, 10) || 0) : videos.length;
+        const { filtered, warnings } = filterVideos(selectionMode, videos, specificInput, rStart, rEnd);
         return { selectedVideos: filtered, warnings };
     }, [videos, selectionMode, specificInput, rangeStart, rangeEnd]);
 
     // Update displayed warnings when local parsing changes
     useEffect(() => {
         setSelectionWarnings(localWarnings);
+        setWarningsExpanded(false);
     }, [localWarnings]);
 
     // Entrance animations
@@ -388,7 +439,7 @@ export default function App() {
     // Supabase Google OAuth sign-in
     const handleSupabaseSignIn = useCallback(async () => {
         try { await signIn(); }
-        catch (err) { setError(`Sign-in failed: ${err.message}`); }
+        catch (err) { setError(sanitizeErrorForDisplay(err.message)); }
     }, [signIn]);
 
     // Manual session refresh fallback
@@ -396,16 +447,42 @@ export default function App() {
         try {
             await refreshSession();
             setSuccess('Session refreshed!');
-        } catch (err) { setError(`Session refresh failed: ${err.message}`); }
+        } catch (err) { setError(sanitizeErrorForDisplay(err.message)); }
     }, [refreshSession]);
 
+    // One-time setup: opens a visible Chrome window for Google login
+    const handleSetup = useCallback(async () => {
+        try {
+            setSetupLoading(true); setError(''); setNeedsSetup(false);
+            setProgress('Opening Chrome — please sign into Google in the window that appears...');
+            const res = await authFetch('/automation/setup', { method: 'POST' });
+            const data = await res.json();
+            if (res.ok) {
+                setSuccess(data.message || 'Setup complete! You can now import playlists.');
+            } else {
+                throw new Error(data.error || 'Setup failed.');
+            }
+        } catch (err) {
+            setError(sanitizeErrorForDisplay(err.message));
+        } finally {
+            setSetupLoading(false); setProgress('');
+        }
+    }, []);
+
     const runImport = useCallback(async () => {
+        if (selectionMode === 'range') {
+            const s = parseInt(rangeStart, 10);
+            const e = parseInt(rangeEnd, 10);
+            if (rangeStart.trim() === '' || rangeEnd.trim() === '' || isNaN(s) || isNaN(e) || s < 1 || e < 1) {
+                setError('Enter a valid input — both start and end must be positive numbers.');
+                return;
+            }
+        }
         try {
             setLoading(true); setError(''); setSelectionWarnings([]);
             setProgress('1/2: Fetching playlist videos...');
-            const ytRes = await fetch(`${API}/playlist`, {
+            const ytRes = await authFetch('/playlist', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: playlistUrl }),
             });
             if (!ytRes.ok) { const d = await ytRes.json().catch(() => ({})); throw new Error(d.error || 'Failed to fetch playlist.'); }
@@ -424,12 +501,12 @@ export default function App() {
                     effectiveMode = 'all'; // empty input → import all
                 }
             } else if (selectionMode === 'range') {
-                selInput = `${rangeStart}-${rangeEnd}`;
+                selInput = `${parseInt(rangeStart)}-${parseInt(rangeEnd)}`;
             }
 
             // Filter locally using fresh data
             const { filtered: toImport, warnings: filterWarns } = filterVideos(
-                effectiveMode, allVids, selInput, rangeStart, rangeEnd
+                effectiveMode, allVids, selInput, parseInt(rangeStart) || 1, parseInt(rangeEnd) || allVids.length
             );
             // Only show warnings for real errors (OOB, unparsable)
             if (filterWarns.length > 0) setSelectionWarnings(filterWarns);
@@ -448,27 +525,45 @@ export default function App() {
 
             setProgress(`2/2: Importing ${toImport.length} of ${allVids.length} videos to NotebookLM...`);
 
-            const res = await fetch(`${API}/automation/import-playlist`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    playlistUrl,
-                    selectedLinks: toImport.map(v => v.url),
-                    selectionMode: effectiveMode,
-                    selectionInput: selInput,
-                }),
-            });
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+            let res;
+            try {
+                res = await authFetch('/automation/import-playlist', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        playlistUrl,
+                        selectedLinks: toImport.map(v => v.url),
+                        selectionMode: effectiveMode,
+                        selectionInput: selInput,
+                    }),
+                    signal: controller.signal,
+                });
+            } catch (fetchErr) {
+                if (fetchErr.name === 'AbortError') {
+                    throw new Error('Import timed out after 2 minutes. The background process may still be running — try again or check the backend logs.');
+                }
+                throw fetchErr;
+            } finally {
+                clearTimeout(timeoutId);
+            }
 
             if (!res.ok) {
                 const d = await res.json().catch(() => ({}));
+                if (d.code === 'NEEDS_SETUP') {
+                    setNeedsSetup(true);
+                    throw new Error('First-time setup required: click "Setup NotebookLM" below to sign into Google once. After that, imports will run silently in the background.');
+                }
                 if (d.warnings?.length > 0) setSelectionWarnings(d.warnings);
                 throw new Error(`Automation error: ${d.message || 'Failed or timed out.'}`);
             }
 
             const resData = await res.json();
             if (resData.warnings?.length > 0) setSelectionWarnings(resData.warnings);
-            setSuccess(`Notebook created: ${resData.createdName} — check the Chrome window.`);
-            // Don't open URL — Chrome tab is already left open by the worker
+            const nbUrl = resData.notebookUrl || '';
+            setSuccess(`✓ Notebook "${resData.createdName}" created! ${nbUrl ? 'Open it: ' + nbUrl : ''}`);
+            setNeedsSetup(false);
 
             // Log import to Supabase history
             if (user?.id) {
@@ -476,8 +571,8 @@ export default function App() {
             }
         } catch (err) {
             if (err.message.includes('fetch') && videos.length > 0) {
-                setError('The automation is taking longer than expected. Chrome is likely still running in the background!');
-            } else { setError(err.message); }
+                setError('The automation is taking longer than expected. It may still be running in the background.');
+            } else { setError(sanitizeErrorForDisplay(err.message)); }
         } finally { setLoading(false); setProgress(''); }
     }, [playlistUrl, videos.length, importMode, selectionMode, specificInput, rangeStart, rangeEnd, user]);
 
@@ -517,54 +612,75 @@ export default function App() {
         <>
             <ThreeBackground />
             <div className="container">
-                <header className="header" ref={headerRef}>
-                    <div className="logo-row"><TubeTomeLogo size={48} className="logo-spin" /></div>
+                {/* ── Top Bar: Logo + Auth Button ── */}
+                <div className="top-bar" ref={headerRef}>
+                    <div className="top-bar-left">
+                        <TubeTomeLogo size={36} />
+                        <span className="top-bar-title">Tube<span className="accent">Tome</span></span>
+                    </div>
+                    <div className="top-bar-right">
+                        {user ? (
+                            <button type="button" className="btn-auth-pill" onClick={signOut}>
+                                {profile?.avatar_url ? (
+                                    <img src={profile.avatar_url} alt="" className="auth-pill-avatar" />
+                                ) : null}
+                                <span className="auth-pill-text">Sign out</span>
+                            </button>
+                        ) : !authLoading ? (
+                            <button type="button" className="btn-auth-pill btn-auth-signin" onClick={handleSupabaseSignIn}>
+                                <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.9 33.5 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.9z" /><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.3 15.5 18.8 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 16 4 9.2 8.3 6.3 14.7z" /><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5.1l-6.2-5.3C29.5 35.2 26.9 36 24 36c-5.3 0-9.8-3.5-11.3-8.3l-6.5 5C9.1 39.6 16 44 24 44z" /><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.6l6.2 5.3C36.7 39.6 44 34 44 24c0-1.3-.1-2.7-.4-3.9z" /></svg>
+                                <span className="auth-pill-text">Sign in</span>
+                            </button>
+                        ) : null}
+                    </div>
+                </div>
+
+                {/* ── Hero ── */}
+                <header className="header">
                     <h1>Tube<span className="accent">Tome</span></h1>
                     <p className="subtitle">Import YouTube playlists directly to NotebookLM</p>
                 </header>
 
                 {error && <div className="toast toast-error" role="alert">{error}</div>}
-                {success && <div className="toast toast-success" role="status">{success}</div>}
-                {selectionWarnings.length > 0 && (
-                    <div className="toast toast-warning" role="status">
-                        <strong>⚠ Selection Warnings:</strong>
-                        <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
-                            {selectionWarnings.map((w, i) => <li key={i}>{w}</li>)}
-                        </ul>
+                {success && <div className="toast toast-success" role="status"><Linkify text={success} /></div>}
+
+                {/* Setup button — shown when NotebookLM needs initial Google login */}
+                {needsSetup && (
+                    <div className="toast toast-warning" style={{ textAlign: 'center' }}>
+                        <p style={{ margin: '0 0 12px' }}>
+                            <strong>One-time setup needed:</strong> A Chrome window will open for you to sign into Google. After this, all imports run silently in the background.
+                        </p>
+                        <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={handleSetup}
+                            disabled={setupLoading}
+                            style={{ minWidth: '200px' }}
+                        >
+                            <IconBot /> {setupLoading ? 'Setting up…' : 'Setup NotebookLM'}
+                        </button>
                     </div>
                 )}
 
-                {/* ── User Card ── */}
-                {user && (
-                    <div className="card status-card glass user-card" style={{ opacity: 1 }}>
-                        <div className="status-header">
-                            {profile?.avatar_url ? (
-                                <img src={profile.avatar_url} alt="" className="user-avatar" />
-                            ) : <IconBot />}
-                            <h3>{profile?.display_name || user.email}</h3>
-                            <span className="badge badge-ok">Signed in</span>
-                        </div>
-                        <p className="status-desc">
-                            {user.email}
-                            <button type="button" className="link-btn" style={{ marginLeft: 12 }} onClick={signOut}>Sign out</button>
-                        </p>
+                {/* Setup/import progress */}
+                {(progress || setupLoading) && (
+                    <div className="toast" style={{ textAlign: 'center', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                        {progress}
                     </div>
                 )}
-                {!user && !authLoading && (
-                    <div className="card status-card glass" style={{ opacity: 1 }}>
-                        <div className="status-header">
-                            <IconBot />
-                            <h3>Sign In</h3>
-                            <span className="badge badge-warn">Not signed in</span>
+
+                {selectionWarnings.length > 0 && (
+                    <div className="toast toast-warning" role="status">
+                        <div className="warning-header" onClick={() => setWarningsExpanded(prev => !prev)}>
+                            <strong>⚠ Selection Warning{selectionWarnings.length !== 1 ? 's' : ''}</strong>
+                            <button type="button" className="warning-toggle-btn" aria-label="Toggle warnings">
+                                {warningsExpanded ? '▲ Collapse' : '▼ Expand'}
+                            </button>
                         </div>
-                        <div className="status-actions">
-                            <p className="status-desc">Sign in with Google to track your import history.</p>
-                            <div className="login-buttons">
-                                <button type="button" className="btn-google" onClick={handleSupabaseSignIn}>
-                                    <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.9 33.5 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.9z" /><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.3 15.5 18.8 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6 29.3 4 24 4 16 4 9.2 8.3 6.3 14.7z" /><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5.1l-6.2-5.3C29.5 35.2 26.9 36 24 36c-5.3 0-9.8-3.5-11.3-8.3l-6.5 5C9.1 39.6 16 44 24 44z" /><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.6l6.2 5.3C36.7 39.6 44 34 44 24c0-1.3-.1-2.7-.4-3.9z" /></svg>
-                                    Sign in with Google
-                                </button>
-                            </div>
+                        <div className={`warning-content ${warningsExpanded ? 'warning-expanded' : 'warning-collapsed'}`}>
+                            <ul className="warning-list">
+                                {selectionWarnings.map((w, i) => <li key={i}>{w}</li>)}
+                            </ul>
                         </div>
                     </div>
                 )}
@@ -607,6 +723,7 @@ export default function App() {
                                 <input type="text" value={specificInput}
                                     onChange={e => setSpecificInput(e.target.value)}
                                     placeholder="Enter video numbers: 2, 5, 3, 6, 7, 45, 23"
+                                    maxLength={5000}
                                     className="sel-input" />
                                 <p className="sel-hint">Comma-separated video serial numbers (1-based)</p>
                             </div>
@@ -616,14 +733,26 @@ export default function App() {
                             <div className="selection-input-group range-inputs">
                                 <div className="range-field">
                                     <label>From video #</label>
-                                    <input type="number" min="1" value={rangeStart}
-                                        onChange={e => setRangeStart(parseInt(e.target.value) || 1)} />
+                                    <input type="text" inputMode="numeric" pattern="[0-9]*"
+                                        value={rangeStart}
+                                        placeholder="Start"
+                                        maxLength={7}
+                                        onChange={e => {
+                                            const v = e.target.value.replace(/[^0-9]/g, '');
+                                            setRangeStart(v);
+                                        }} />
                                 </div>
                                 <span className="range-dash">—</span>
                                 <div className="range-field">
                                     <label>To video #</label>
-                                    <input type="number" min="1" value={rangeEnd}
-                                        onChange={e => setRangeEnd(parseInt(e.target.value) || 100)} />
+                                    <input type="text" inputMode="numeric" pattern="[0-9]*"
+                                        value={rangeEnd}
+                                        placeholder="End"
+                                        maxLength={7}
+                                        onChange={e => {
+                                            const v = e.target.value.replace(/[^0-9]/g, '');
+                                            setRangeEnd(v);
+                                        }} />
                                 </div>
                             </div>
                         )}
@@ -634,7 +763,7 @@ export default function App() {
                     </div>
 
                     <button type="submit" className="btn-primary"
-                        disabled={loading || !playlistUrl || (importMode === 'notebook' && !authConfigured)}>
+                        disabled={loading || !playlistUrl}>
                         {loading ? (
                             <><span className="spinner" aria-hidden="true" />{progress || 'Processing…'}</>
                         ) : importMode === 'links' ? (
@@ -695,11 +824,11 @@ export default function App() {
                     <div className="modal-overlay" role="dialog" aria-modal="true">
                         <div className="modal glass">
                             <h3>Before we begin</h3>
-                            <p>TubeTome will launch a real browser session logged into your Google account and interact with the NotebookLM UI.</p>
+                            <p>TubeTome will run a background browser session to interact with NotebookLM and add your playlist videos as sources.</p>
                             <ul>
-                                <li>Your credentials stay on your machine (encrypted).</li>
+                                <li>First time only: a Chrome window will briefly open so you can sign into Google.</li>
+                                <li>After that, all imports run silently in the background.</li>
                                 <li>No data is sent to third parties.</li>
-                                <li>You can delete your session at any time.</li>
                             </ul>
                             <div className="modal-actions">
                                 <button type="button" className="btn-outline" onClick={() => setShowConsent(false)}>Cancel</button>

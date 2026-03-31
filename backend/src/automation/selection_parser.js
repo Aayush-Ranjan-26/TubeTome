@@ -9,6 +9,10 @@
  * out-of-range indices, unparsable items, and user-facing warnings.
  */
 
+/** Hard cap to prevent DoS via enormous ranges. */
+const MAX_RANGE_SIZE = 10_000;
+const MAX_TOKENS = 2_000;
+
 /**
  * Parse a selection string and filter against a playlist.
  *
@@ -60,6 +64,13 @@ function parseIndices(input, playlistLength, result) {
     }
 
     const tokens = input.split(/[,\s]+/).filter(t => t.length > 0);
+
+    // Cap tokens to prevent CPU abuse
+    if (tokens.length > MAX_TOKENS) {
+        result.warnings.push(`Input truncated to first ${MAX_TOKENS} items (${tokens.length} provided).`);
+        tokens.length = MAX_TOKENS;
+    }
+
     const seen = new Set();
 
     for (const token of tokens) {
@@ -89,14 +100,20 @@ function parseIndices(input, playlistLength, result) {
         result.valid_indices.push(num);
     }
 
-    // Build warnings — only for actual errors, not informational dedup
+    // Build warnings — truncate huge lists to prevent response bloat
     if (result.ignored_out_of_range.length > 0) {
+        const preview = result.ignored_out_of_range.slice(0, 5).join(', ');
+        const suffix = result.ignored_out_of_range.length > 5
+            ? ` …and ${result.ignored_out_of_range.length - 5} more` : '';
         result.warnings.push(
-            `Out-of-range ignored (playlist has ${playlistLength} videos): ${result.ignored_out_of_range.join(', ')}`
+            `${result.ignored_out_of_range.length} out-of-range indices ignored (${preview}${suffix}). Playlist has ${playlistLength} videos.`
         );
     }
     if (result.unparsable_items.length > 0) {
-        result.warnings.push(`Invalid items ignored: ${result.unparsable_items.join(', ')}`);
+        const preview = result.unparsable_items.slice(0, 5).join(', ');
+        const suffix = result.unparsable_items.length > 5
+            ? ` …and ${result.unparsable_items.length - 5} more` : '';
+        result.warnings.push(`${result.unparsable_items.length} invalid items ignored (${preview}${suffix}).`);
     }
     if (result.valid_indices.length === 0 && tokens.length > 0) {
         result.warnings.push('No valid indices found. Make sure to enter numbers between 1 and ' + playlistLength + '.');
@@ -130,10 +147,16 @@ function parseRange(input, playlistLength, result) {
             start = parseInt(parts[0], 10);
             end = parseInt(parts[1], 10);
         } else {
-            result.unparsable_items.push(input.trim());
-            result.warnings.push(`Could not parse range "${input.trim()}". Use format: "5-12" or "5..12"`);
+            result.unparsable_items.push(input.trim().substring(0, 100));
+            result.warnings.push(`Could not parse range. Use format: "5-12" or "5..12"`);
             return result;
         }
+    }
+
+    // Reject absurdly large values early
+    if (start > 1_000_000 || end > 1_000_000) {
+        result.warnings.push(`Range values too large (max 1,000,000). Playlist has ${playlistLength} videos.`);
+        return result;
     }
 
     // Swap if start > end
@@ -142,34 +165,35 @@ function parseRange(input, playlistLength, result) {
         [start, end] = [end, start];
     }
 
-    // Collect clipped indices for warning
-    const clipped = [];
-    if (start < 1) {
-        for (let i = start; i < 1; i++) clipped.push(i);
-        start = 1;
-    }
-    if (end > playlistLength) {
-        for (let i = playlistLength + 1; i <= end; i++) clipped.push(i);
-        end = playlistLength;
-    }
+    // Clip to playlist bounds (without enumerating every clipped index)
+    const clippedBelow = Math.max(0, 1 - start);
+    const clippedAbove = Math.max(0, end - playlistLength);
+    const totalClipped = clippedBelow + clippedAbove;
+
+    start = Math.max(1, start);
+    end = Math.min(playlistLength, end);
 
     // If no valid range remains
     if (start > end || start > playlistLength) {
         result.warnings.push(`Range is entirely outside playlist bounds (1–${playlistLength}).`);
-        if (clipped.length > 0) {
-            result.warnings.push(`Indices ignored: ${clipped.join(', ')}`);
-        }
         return result;
     }
 
-    // Build valid indices (ascending order for ranges)
+    // Cap range to prevent memory/CPU abuse
+    const rangeSize = end - start + 1;
+    if (rangeSize > MAX_RANGE_SIZE) {
+        result.warnings.push(`Range too large (${rangeSize} videos). Capped to first ${MAX_RANGE_SIZE}.`);
+        end = start + MAX_RANGE_SIZE - 1;
+    }
+
+    // Build valid indices
     for (let i = start; i <= end; i++) {
         result.valid_indices.push(i);
     }
 
-    if (clipped.length > 0) {
-        result.ignored_out_of_range = clipped;
-        result.warnings.push(`Range clipped to playlist bounds (1–${playlistLength}); indices ignored: ${clipped.join(', ')}`);
+    if (totalClipped > 0) {
+        result.ignored_out_of_range = Array.from({ length: Math.min(totalClipped, 10) }, (_, i) => i); // placeholder
+        result.warnings.push(`Range clipped to playlist bounds (1–${playlistLength}); ${totalClipped} out-of-range indices ignored.`);
     }
 
     return result;

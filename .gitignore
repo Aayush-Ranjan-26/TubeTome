@@ -12,14 +12,24 @@ frontend/build/
 .env.local
 .env.*.local
 backend/.env
+frontend/.env
+*.env.hex
+*.env.enc
 
 # Chrome persistent profile (contains cookies/auth data)
 backend/data/
 data/
+**/browser-profile/
+**/chrome-profile/
+
+# Encrypted auth blobs
+auth.json.enc
+*.enc
 
 # Logs & screenshots
 logs/
 backend/logs/
+*.log
 
 # IDE / OS
 .vscode/
@@ -43,3 +53,8 @@ auth.json.enc
 
 # Gemini agent artifacts
 .gemini/
+
+# GSD framework
+.agent/
+.planning/
+init.json

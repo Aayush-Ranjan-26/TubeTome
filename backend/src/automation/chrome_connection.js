@@ -1,26 +1,24 @@
 /**
- * Chrome connection utility via Chrome DevTools Protocol (CDP).
+ * Browser management — Playwright persistent context.
  *
- * Instead of launching separate browser windows, this module:
- * 1. Finds the user's installed Chrome executable
- * 2. Launches it with --remote-debugging-port (or connects to an already-running one)
- * 3. Uses the user's real Chrome profile (so they're already logged into Google)
- * 4. Returns a Playwright browser instance connected via CDP
+ * Uses a DEDICATED profile directory (separate from the user's Chrome).
+ * Google session cookies persist across runs.
  *
- * This way all automation happens in new tabs of the user's own browser.
+ * FLOW:
+ *   1. First time → user clicks "Setup" → Chrome opens VISIBLY → user logs into Google
+ *   2. Cookies saved to  data/browser-profile/
+ *   3. All subsequent imports run HEADLESS in the background (invisible)
  */
 import { chromium } from 'playwright';
-import { execFile } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
-import http from 'node:http';
 
-const CDP_PORT = 9222;
-const CDP_URL = `http://127.0.0.1:${CDP_PORT}`;
+const PROFILE_DIR = path.resolve('data', 'browser-profile');
 
-/**
- * Find the Chrome executable on Windows.
- */
+let activeContext = null;
+
+/* ── Find Chrome on Windows ──────────────────────── */
+
 function findChromePath() {
     const candidates = [
         path.join(process.env.PROGRAMFILES || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
@@ -33,93 +31,128 @@ function findChromePath() {
     return null;
 }
 
-/**
- * Get the user's default Chrome user data directory.
- */
-function getChromeProfileDir() {
-    return path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data');
-}
+/* ── Launch / get context ────────────────────────── */
 
-/**
- * Check if Chrome is already running with a debugging port.
- */
-function isCDPAvailable() {
-    return new Promise((resolve) => {
-        const req = http.get(`${CDP_URL}/json/version`, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    JSON.parse(data);
-                    resolve(true);
-                } catch {
-                    resolve(false);
-                }
-            });
-        });
-        req.on('error', () => resolve(false));
-        req.setTimeout(2000, () => { req.destroy(); resolve(false); });
-    });
-}
+async function launch(headless = true) {
+    await close();
+    fs.mkdirSync(PROFILE_DIR, { recursive: true });
 
-/**
- * Launch Chrome with debugging port enabled using the user's real profile.
- * If Chrome is already running WITHOUT the debugging port, this will fail —
- * the user needs to close Chrome first.
- */
-async function launchChromeWithCDP() {
     const chromePath = findChromePath();
-    if (!chromePath) {
-        throw new Error('Chrome not found. Please install Google Chrome.');
+    const opts = {
+        headless,
+        args: [
+            '--no-first-run',
+            '--no-default-browser-check',
+        ],
+        viewport: { width: 1280, height: 800 },
+        ignoreDefaultArgs: ['--enable-automation'],
+    };
+
+    if (chromePath) {
+        opts.executablePath = chromePath;
+        console.log(`[browser] Using Chrome: ${chromePath}`);
     }
 
-    const profileDir = getChromeProfileDir();
-    console.log(`[chrome] Launching Chrome with CDP on port ${CDP_PORT}`);
-    console.log(`[chrome] Profile: ${profileDir}`);
-    console.log(`[chrome] Executable: ${chromePath}`);
+    console.log(`[browser] Launching (headless: ${headless})`);
+    activeContext = await chromium.launchPersistentContext(PROFILE_DIR, opts);
+    console.log('[browser] ✓ Ready');
+    return activeContext;
+}
 
-    // Spawn Chrome detached so it stays open after our process
-    const child = execFile(chromePath, [
-        `--remote-debugging-port=${CDP_PORT}`,
-        `--user-data-dir=${profileDir}`,
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-blink-features=AutomationControlled',
-    ], { detached: true, stdio: 'ignore' });
-    child.unref();
-
-    // Wait for Chrome to start accepting CDP connections
-    for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        if (await isCDPAvailable()) {
-            console.log('[chrome] ✓ CDP connection available');
-            return;
+/**
+ * Get the persistent context (or launch one).
+ * @param {boolean} headless
+ */
+export async function getContext(headless = true) {
+    if (activeContext) {
+        try {
+            activeContext.pages(); // check if alive
+            return activeContext;
+        } catch {
+            activeContext = null;
         }
     }
-    throw new Error(
-        'Chrome did not start with debugging port. ' +
-        'Please close ALL Chrome windows completely and try again.'
-    );
+    return launch(headless);
 }
 
 /**
- * Get a Playwright browser instance connected to the user's Chrome via CDP.
- * Launches Chrome with debugging port if not already running.
- *
- * @returns {{ browser: import('playwright').Browser, isOwned: boolean }}
- *   browser: The connected browser instance
- *   isOwned: false (we don't own the browser — never close it!)
+ * Close the context (but keep the profile on disk).
  */
-export async function getConnectedBrowser() {
-    const alreadyRunning = await isCDPAvailable();
-
-    if (!alreadyRunning) {
-        await launchChromeWithCDP();
+export async function close() {
+    if (activeContext) {
+        try { await activeContext.close(); } catch { /* ok */ }
+        activeContext = null;
     }
-
-    const browser = await chromium.connectOverCDP(CDP_URL);
-    console.log(`[chrome] ✓ Connected to Chrome via CDP (contexts: ${browser.contexts().length})`);
-    return { browser, isOwned: false };
 }
 
-export { isCDPAvailable, CDP_PORT, CDP_URL };
+/* ── Session helpers ─────────────────────────────── */
+
+/**
+ * Check if the persistent profile has a valid Google session.
+ */
+export async function hasGoogleSession() {
+    try {
+        const ctx = await getContext(true);
+        const page = await ctx.newPage();
+        try {
+            await page.goto('https://notebooklm.google.com', {
+                waitUntil: 'domcontentloaded',
+                timeout: 25000,
+            });
+            await page.waitForTimeout(5000);
+            const url = page.url();
+            const loggedIn = url.includes('notebooklm.google.com')
+                && !url.includes('accounts.google.com')
+                && !url.includes('signin');
+            console.log(`[session] Google session: ${loggedIn ? 'active ✓' : 'not found ✗'}`);
+            return loggedIn;
+        } finally {
+            await page.close();
+        }
+    } catch (err) {
+        console.error('[session]', err.message);
+        return false;
+    }
+}
+
+/**
+ * Open a VISIBLE Chrome window so the user can log into Google once.
+ * Resolves when login is complete. Rejects on timeout (5 min).
+ */
+export async function runSetup() {
+    await close(); // close headless if running
+
+    const ctx = await launch(false); // headed = visible
+    const page = ctx.pages()[0] || await ctx.newPage();
+
+    console.log('[setup] Opening NotebookLM — please sign into Google in the Chrome window...');
+    await page.goto('https://notebooklm.google.com', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+    });
+
+    // Wait up to 5 minutes for user to finish Google login
+    for (let i = 0; i < 100; i++) {
+        await page.waitForTimeout(3000);
+        const url = page.url();
+        if (
+            url.includes('notebooklm.google.com')
+            && !url.includes('accounts.google.com')
+            && !url.includes('signin')
+        ) {
+            console.log('[setup] ✓ Google login completed!');
+            // Close pages but cookies are saved in the profile dir
+            for (const p of ctx.pages()) await p.close().catch(() => { });
+            await close();
+            return true;
+        }
+        if (i > 0 && i % 10 === 0) {
+            console.log(`[setup] Still waiting for login… (${(i + 1) * 3}s)`);
+        }
+    }
+
+    await close();
+    throw new Error('Login timed out after 5 minutes. Please try the setup again.');
+}
+
+export { PROFILE_DIR };

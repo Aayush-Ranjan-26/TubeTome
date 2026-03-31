@@ -30,10 +30,14 @@ export async function fetchPlaylistVideos(playlistId) {
     const title = meta.data.items[0].snippet.title;
 
     // 2. All video items with pagination
+    // SECURITY: Cap at 20 pages (1,000 videos) to prevent API quota abuse
+    const MAX_PAGES = 20;
     const videos = [];
     let pageToken = undefined;
+    let pageCount = 0;
 
     do {
+        pageCount++;
         const res = await yt.playlistItems.list({
             part: 'snippet',
             playlistId,
@@ -54,7 +58,11 @@ export async function fetchPlaylistVideos(playlistId) {
         }
 
         pageToken = res.data.nextPageToken;
-    } while (pageToken);
+    } while (pageToken && pageCount < MAX_PAGES);
+
+    if (pageToken) {
+        console.warn(`[youtube] Playlist ${playlistId} truncated at ${videos.length} videos (${MAX_PAGES} pages cap)`);
+    }
 
     return { title, videos };
 }
