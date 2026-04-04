@@ -264,7 +264,7 @@ const API = '/api';
  * Authenticated fetch: reads the current Supabase session and
  * injects the access_token as a Bearer token.
  */
-async function authFetch(path, opts = {}) {
+async function authFetch(path, opts = {}, timeoutMs = 30000) {
     const { data: { session } } = await (await import('./supabaseClient')).supabase.auth.getSession();
     const token = session?.access_token;
     if (!token) throw new Error('You must be signed in to use this feature.');
@@ -273,7 +273,14 @@ async function authFetch(path, opts = {}) {
     headers['Authorization'] = `Bearer ${token}`;
     if (!headers['Content-Type'] && opts.body) headers['Content-Type'] = 'application/json';
 
-    return fetch(`${API}${path}`, { ...opts, headers });
+    // Abort after timeoutMs to prevent indefinite UI hangs
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(`${API}${path}`, { ...opts, headers, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 async function copyText(text) {

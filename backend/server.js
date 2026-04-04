@@ -65,6 +65,7 @@ app.use(helmet({
 app.use((_req, res, next) => {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY'); // legacy browsers (CSP frame-ancestors covers modern)
     next();
 });
 
@@ -287,8 +288,9 @@ app.post('/api/playlist/select', async (req, res) => {
 
 /**
  * Check if there's a saved Google session in the persistent profile.
+ * SECURITY: Requires auth — session existence is sensitive operational info.
  */
-app.get('/api/automation/session-check', async (_req, res) => {
+app.get('/api/automation/session-check', requireAuth, async (_req, res) => {
     try {
         const loggedIn = await hasGoogleSession();
         res.json({ loggedIn });
@@ -438,7 +440,7 @@ app.post('/api/automation/import-playlist', async (req, res) => {
     }
 });
 
-app.get('/api/automation/diagnostics', async (_req, res) => {
+app.get('/api/automation/diagnostics', requireAuth, async (_req, res) => {
     try {
         const loggedIn = await hasGoogleSession();
         res.json({

@@ -12,9 +12,16 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 export const supabase = createClient(SUPABASE_URL || '', SUPABASE_ANON_KEY || '', {
     auth: {
-        flowType: 'pkce',       // SECURITY: PKCE prevents authorization code interception
+        flowType: 'pkce',           // SECURITY: PKCE prevents authorization code interception
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        storage: {
+            // Use sessionStorage instead of localStorage — tokens don't persist across tabs/restarts.
+            // This limits the XSS token theft window: stolen tokens expire with the tab.
+            getItem: (key) => sessionStorage.getItem(key),
+            setItem: (key, value) => sessionStorage.setItem(key, value),
+            removeItem: (key) => sessionStorage.removeItem(key),
+        },
     },
 });
