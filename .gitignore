@@ -58,3 +58,5 @@ auth.json.enc
 .agent/
 .planning/
 init.json
+
+.vercel
