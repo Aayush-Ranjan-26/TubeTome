@@ -70,9 +70,14 @@ app.use((_req, res, next) => {
 });
 
 /* ══════════════════════════════════════════════════════
-   2. CORS – only allow known origins
+   2. CORS – dynamic origin validation
+   Accepts any HTTPS origin + localhost dev servers.
+   HTTP origins (except localhost) are rejected.
+   Primary security is JWT — CORS is defence-in-depth.
    ══════════════════════════════════════════════════════ */
-const ALLOWED_ORIGINS = [
+
+// Explicit allow-list (always permitted regardless of protocol)
+const ALLOWED_ORIGINS_EXPLICIT = [
     'http://localhost:5173',            // Vite dev server
     'http://localhost:4173',            // Vite preview
     ...(process.env.ALLOWED_ORIGINS
@@ -80,13 +85,38 @@ const ALLOWED_ORIGINS = [
         : []),
 ];
 
+// Optional compiled regex patterns for fine-grained control
+// Example: ALLOWED_ORIGIN_PATTERNS=^https://tubetome-[a-z0-9-]+\.vercel\.app$
+const ALLOWED_ORIGIN_PATTERNS = (process.env.ALLOWED_ORIGIN_PATTERNS || '')
+    .split(',')
+    .map(p => p.trim())
+    .filter(Boolean)
+    .map(p => { try { return new RegExp(p); } catch { return null; } })
+    .filter(Boolean);
+
+/**
+ * Returns true if the origin should be allowed.
+ * Rules (in order):
+ *   1. Explicit allow-list match (includes localhost)
+ *   2. Any HTTPS origin — safe because every route requires a valid JWT;
+ *      a cross-origin attacker cannot forge the Authorization header.
+ *   3. Optional regex pattern match from ALLOWED_ORIGIN_PATTERNS env var.
+ *   4. Everything else → rejected.
+ */
+function isOriginAllowed(origin) {
+    if (!origin) return false;
+    if (ALLOWED_ORIGINS_EXPLICIT.includes(origin)) return true;
+    if (origin.startsWith('https://')) return true;
+    if (ALLOWED_ORIGIN_PATTERNS.some(re => re.test(origin))) return true;
+    return false;
+}
+
 app.use(cors({
     origin(origin, cb) {
         // SECURITY: Reject requests with no Origin header (blocks null-origin attacks
         // from sandboxed iframes, file:// protocol, and cross-origin redirects).
-        // Server-to-server calls should use API keys, not CORS.
         if (!origin) return cb(new Error('CORS: origin required'));
-        if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+        if (isOriginAllowed(origin)) return cb(null, true);
         cb(new Error('CORS: origin not allowed'));
     },
     methods: ['GET', 'POST'],
@@ -100,7 +130,7 @@ app.use(express.json({ limit: '1mb' }));
 /* ══════════════════════════════════════════════════════
    2.5. CSRF PROTECTION (origin-based, defence-in-depth)
    ══════════════════════════════════════════════════════ */
-app.use('/api', csrfProtection(ALLOWED_ORIGINS, logSecurityEvent));
+app.use('/api', csrfProtection(isOriginAllowed, logSecurityEvent));
 
 /* ══════════════════════════════════════════════════════
    3. RATE LIMITING

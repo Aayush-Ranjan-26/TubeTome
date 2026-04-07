@@ -60,7 +60,10 @@ export function useAuth() {
         const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: window.location.origin,
+                // Use current origin + trailing slash so it matches Supabase's
+                // wildcard redirect pattern (https://yourdomain.com/**).
+                // This works correctly on any deployment URL automatically.
+                redirectTo: `${window.location.origin}/`,
                 queryParams: {
                     prompt: 'select_account',
                 },
