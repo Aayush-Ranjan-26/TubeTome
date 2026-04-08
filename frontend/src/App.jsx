@@ -258,7 +258,10 @@ function ThreeBackground() {
 /* ═══════════════════════════════════════════════════════
    HELPERS
    ═══════════════════════════════════════════════════════ */
-const API = '/api';
+// In production (Vercel), the backend is on a different domain (Render).
+// VITE_API_URL is set in Vercel's environment variables dashboard.
+// In local dev, this is empty and Vite's proxy handles /api → localhost:3001.
+const API = (import.meta.env.VITE_API_URL ?? '') + '/api';
 
 /**
  * Authenticated fetch: reads the current Supabase session and
