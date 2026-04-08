@@ -80,6 +80,7 @@ app.use((_req, res, next) => {
 const ALLOWED_ORIGINS_EXPLICIT = [
     'http://localhost:5173',            // Vite dev server
     'http://localhost:4173',            // Vite preview
+    'http://localhost:3001',            // Vite proxy changeOrigin target
     'https://tube-tome.vercel.app',     // Production Vercel frontend
     ...(process.env.ALLOWED_ORIGINS
         ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
@@ -114,9 +115,14 @@ function isOriginAllowed(origin) {
 
 app.use(cors({
     origin(origin, cb) {
-        // SECURITY: Reject requests with no Origin header (blocks null-origin attacks
-        // from sandboxed iframes, file:// protocol, and cross-origin redirects).
-        if (!origin) return cb(new Error('CORS: origin required'));
+        // In development, Vite proxy forwards requests server-to-server without
+        // an Origin header — allow these through so local dev works.
+        if (!origin) {
+            if (!IS_PRODUCTION) return cb(null, true);
+            // SECURITY: In production, reject no-origin requests (blocks null-origin
+            // attacks from sandboxed iframes, file:// protocol, etc.)
+            return cb(new Error('CORS: origin required'));
+        }
         if (isOriginAllowed(origin)) return cb(null, true);
         cb(new Error('CORS: origin not allowed'));
     },
