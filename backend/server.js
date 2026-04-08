@@ -80,6 +80,7 @@ app.use((_req, res, next) => {
 const ALLOWED_ORIGINS_EXPLICIT = [
     'http://localhost:5173',            // Vite dev server
     'http://localhost:4173',            // Vite preview
+    'https://tube-tome.vercel.app',     // Production Vercel frontend
     ...(process.env.ALLOWED_ORIGINS
         ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
         : []),
