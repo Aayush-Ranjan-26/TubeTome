@@ -137,7 +137,14 @@ app.use(express.json({ limit: '1mb' }));
 /* ══════════════════════════════════════════════════════
    2.5. CSRF PROTECTION (origin-based, defence-in-depth)
    ══════════════════════════════════════════════════════ */
-app.use('/api', csrfProtection(isOriginAllowed, logSecurityEvent));
+// In development, skip CSRF — CORS already gates requests and Vite proxy
+// strips Origin headers making CSRF always reject legitimate dev requests.
+// In production, CSRF remain fully enforced.
+app.use('/api', (req, res, next) =>
+    IS_PRODUCTION
+        ? csrfProtection(isOriginAllowed, logSecurityEvent)(req, res, next)
+        : next()
+);
 
 /* ══════════════════════════════════════════════════════
    3. RATE LIMITING

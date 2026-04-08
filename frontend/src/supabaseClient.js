@@ -16,12 +16,7 @@ export const supabase = createClient(SUPABASE_URL || '', SUPABASE_ANON_KEY || ''
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
-        storage: {
-            // Use sessionStorage instead of localStorage — tokens don't persist across tabs/restarts.
-            // This limits the XSS token theft window: stolen tokens expire with the tab.
-            getItem: (key) => sessionStorage.getItem(key),
-            setItem: (key, value) => sessionStorage.setItem(key, value),
-            removeItem: (key) => sessionStorage.removeItem(key),
-        },
+        // localStorage persists the PKCE code verifier through the OAuth redirect.
+        // sessionStorage was losing the verifier during navigation, forcing two sign-ins.
     },
 });
