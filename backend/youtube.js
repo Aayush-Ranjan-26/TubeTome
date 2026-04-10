@@ -4,14 +4,10 @@ import { google } from 'googleapis';
  * Creates a lazily-initialized YouTube client.
  * This ensures dotenv has loaded before we read the key.
  */
-let _yt = null;
 function getClient() {
-    if (!_yt) {
-        const key = process.env.YOUTUBE_API_KEY;
-        if (!key) throw new Error('YOUTUBE_API_KEY is not set in .env');
-        _yt = google.youtube({ version: 'v3', auth: key });
-    }
-    return _yt;
+    const key = process.env.YOUTUBE_API_KEY;
+    if (!key) throw new Error('YOUTUBE_API_KEY is not set in .env');
+    return google.youtube({ version: 'v3', auth: key });
 }
 
 /**
@@ -23,7 +19,18 @@ export async function fetchPlaylistVideos(playlistId) {
     const yt = getClient();
 
     // 1. Playlist metadata
-    const meta = await yt.playlists.list({ part: 'snippet', id: playlistId });
+    let meta;
+    try {
+        meta = await yt.playlists.list({ part: 'snippet', id: playlistId });
+    } catch (err) {
+        const status = err?.response?.status;
+        const reason = err?.errors?.[0]?.reason || err?.response?.data?.error?.errors?.[0]?.reason;
+        if (status === 400 || status === 403) {
+            throw new Error(`YouTube API error (${status}${reason ? ': ' + reason : ''}). Check your API key and quota.`);
+        }
+        throw new Error(`YouTube API unreachable: ${err.message}`);
+    }
+
     if (!meta.data.items?.length) {
         throw new Error('Playlist not found. It may be private or deleted.');
     }
@@ -38,12 +45,19 @@ export async function fetchPlaylistVideos(playlistId) {
 
     do {
         pageCount++;
-        const res = await yt.playlistItems.list({
-            part: 'snippet',
-            playlistId,
-            maxResults: 50,
-            pageToken,
-        });
+        let res;
+        try {
+            res = await yt.playlistItems.list({
+                part: 'snippet',
+                playlistId,
+                maxResults: 50,
+                pageToken,
+            });
+        } catch (err) {
+            const status = err?.response?.status;
+            const reason = err?.errors?.[0]?.reason || err?.response?.data?.error?.errors?.[0]?.reason;
+            throw new Error(`YouTube API error fetching items (${status || 'unknown'}${reason ? ': ' + reason : ''})`);
+        }
 
         for (const item of res.data.items || []) {
             const vid = item.snippet?.resourceId?.videoId;

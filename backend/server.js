@@ -276,6 +276,8 @@ function safeErrorMessage(err, fallback = 'An unexpected error occurred.') {
     // Specific known-safe patterns
     if (err.message?.includes('Playlist not found')) return err.message;
     if (err.message?.includes('Queue full')) return err.message;
+    if (err.message?.includes('YouTube API error')) return err.message;
+    if (err.message?.includes('YouTube API unreachable')) return err.message;
     return fallback;
 }
 
