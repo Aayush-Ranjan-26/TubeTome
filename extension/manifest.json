@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "TubeTome",
+  "version": "1.3.2",
+  "description": "Lets the TubeTome website create NotebookLM notebooks in your own signed-in browser.",
+  "permissions": [
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://tube-tome.vercel.app/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://notebooklm.google.com/*",
+        "https://notebook.google.com/*"
+      ],
+      "js": [
+        "notebooklm.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": [
+    "https://accounts.google.com/*"
+  ]
+}
