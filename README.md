@@ -1,165 +1,218 @@
-# TubeTome
+# 📚 TubeTome ✨
 
-**Turn a YouTube playlist into a Google NotebookLM notebook in a few clicks.**
+> **Turn any YouTube playlist into a Google NotebookLM notebook in just a few clicks! 🚀**
 
-TubeTome lists the videos in a public YouTube playlist, lets you choose which ones to keep, and then creates a NotebookLM notebook with those videos as sources. The notebook is created in **your own signed-in browser** through a small Chrome extension, so your Google credentials never leave your machine.
+TubeTome grabs the videos from any public YouTube playlist, lets you cherry-pick the ones you want, and automagically cooks up a NotebookLM notebook packed w/ those sources. 
 
-**Live site:** https://tube-tome.vercel.app
+Best of all? Everything runs right in **your own signed-in browser** via a lightweight Chrome ext — so your Google credentials stay 100% private and never touch our servers! 🔒🛡️
 
----
+[![Live Site](https://img.shields.io/badge/Live%20Demo-tube--tome.vercel.app-blueviolet?style=flat-square&logo=vercel)](https://tube-tome.vercel.app)
+[![React](https://img.shields.io/badge/Frontend-React%2018%20%2B%20Vite-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
+[![Backend](https://img.shields.io/badge/Backend-Express%20on%20Vercel-black?style=flat-square&logo=express)](https://expressjs.com/)
+[![Supabase](https://img.shields.io/badge/Database-Supabase%20%2B%20RLS-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com/)
+[![Extension](https://img.shields.io/badge/Chrome%20Ext-Manifest%20V3-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
 
-## Table of contents
-
-- [Features](#features)
-- [How it works](#how-it-works)
-- [Getting started](#getting-started)
-- [Using TubeTome](#using-tubetome)
-- [Project structure](#project-structure)
-- [Deployment](#deployment)
-- [Configuration](#configuration)
-- [Security and privacy](#security-and-privacy)
-- [Troubleshooting](#troubleshooting)
-- [Limitations](#limitations)
-- [Tech stack](#tech-stack)
+🔗 **Live App:** [tube-tome.vercel.app](https://tube-tome.vercel.app)
 
 ---
 
-## Features
+## 📑 Table of Contents
 
-- **Playlist extraction.** Paste any public YouTube playlist URL and get every video link.
-- **Flexible selection.** Import all videos, specific positions (`2, 5, 8`), or a range (`5-12`).
-- **One-click notebook.** The extension creates a NotebookLM notebook, adds the videos as sources, and names it after the playlist.
-- **Runs out of sight.** The import happens in a minimized browser window that closes itself when finished. The site then shows a link to the finished notebook.
-- **Google sign-in.** Authentication is handled by Supabase (Google OAuth). Import history is stored per user with row-level security.
-- **Built-in diagnostics.** If an import fails, a **Copy diagnostics** button on the error captures the extension version, browser, and the controls visible on the NotebookLM page, which makes layout changes easy to report.
+- [✨ Features](#-features)
+- [🧠 How It Works](#-how-it-works)
+- [🚀 Getting Started](#-getting-started)
+- [🎮 Using TubeTome](#-using-tubetome)
+- [📂 Project Structure](#-project-structure)
+- [🚢 Deployment](#-deployment)
+- [⚙️ Configuration](#️-configuration)
+- [🛡️ Security & Privacy](#️-security--privacy)
+- [🔧 Troubleshooting](#-troubleshooting)
+- [⚠️ Limitations & Gotchas](#️-limitations--gotchas)
+- [🧰 Tech Stack](#-tech-stack)
 
-## How it works
+---
 
+## ✨ Features
+
+- 📺 **Instant Playlist Extraction** — Drop in any public YouTube playlist URL and grab every video link in a snap.
+- 🎯 **Flexible Selection** — Import everything, select specific positions (`2, 5, 8`), or grab an exact range (`5-12`).
+- ⚡ **One-Click Notebook Creation** — The ext handles the heavy lifting: opens NotebookLM, inserts the videos as web sources, and titles the notebook after your playlist.
+- 🕶️ **Runs Out of Sight** — Automation runs quietly in a minimized browser window that self-closes when done, handing you back a clean direct link.
+- 🔐 **Google Auth + RLS** — Fast Google sign-in via Supabase OAuth. Your import history is protected w/ Postgres Row-Level Security (RLS).
+- 🩺 **Built-in Diagnostics** — If NotebookLM tweaks its UI and an import stumbles, hit **Copy diagnostics** to instantly grab version, browser, and DOM state info for quick debugging.
+
+---
+
+## 🧠 How It Works
+
+Here is a quick bird's-eye view of how the pieces talk to each other:
+
+```text
+🌐 Web App (Vercel) ────► ⚡ Backend API (Vercel) ────► 📺 YouTube Data API
+       │                                                 (fetches playlist videos)
+       │
+       └── window.postMessage ──► 🧩 Chrome Extension ──► 📓 NotebookLM
+                                  (runs locally in browser w/ your Google session 🔒)
 ```
-Website (Vercel) ──► Backend API (Vercel) ──► YouTube Data API      lists the playlist's videos
-      │
-      └── window.postMessage ──► Chrome extension ──► NotebookLM     creates the notebook
-                                 (your browser, your Google session)
-```
 
-1. You sign in on the website with Google and paste a playlist URL.
-2. The website asks the backend for the playlist. The backend verifies your Supabase session and queries the YouTube Data API.
-3. You choose the videos. When you click **Import to NotebookLM**, the website hands the selected links to the TubeTome extension.
-4. The extension opens NotebookLM in a minimized window, creates a notebook, pastes the links as website sources, and renames the notebook. Progress is reported back to the website.
-5. When the import finishes, the website shows the notebook link and records the import in your history.
+1. **Sign in & paste:** Pop open the site, sign in w/ Google, and paste your YouTube playlist URL.
+2. **Fetch playlist:** The frontend ping the backend API w/ your Supabase auth token. The backend queries YouTube Data API v3 and returns the video list.
+3. **Pick your clips:** Choose your videos and hit **Import to NotebookLM**. The frontend shoots a message to the TubeTome extension.
+4. **Automate the notebook:** The ext opens NotebookLM in a minimized tab, spins up a fresh notebook, adds the links as website sources, and renames it. Live progress streams right back to the UI!
+5. **Done!** You get a direct link to your shiny new notebook, and the run is saved to your import history.
 
-The extension only ever acts inside your own NotebookLM session. No Google login, cookie, or token is sent to a server.
+> 🔒 **Privacy Note:** The extension only ever interacts inside your local NotebookLM session. No passwords, tokens, or Google session cookies are ever sent to our backend.
 
-## Getting started
+---
 
-### 1. Install the extension
+## 🚀 Getting Started
 
-The extension is not published on the Chrome Web Store yet, so it is loaded manually:
+### 1. Install the Chrome Extension
 
-1. Download the extension from the site's install card, or use [`frontend/public/tubetome-extension.zip`](frontend/public/tubetome-extension.zip), and unzip it.
-2. Open `chrome://extensions` and enable **Developer mode**.
+Since the ext isn't on the Chrome Web Store yet, you can load it in unpack mode in ~30 seconds:
+
+1. Download the zip from the site's install card, or grab [`frontend/public/tubetome-extension.zip`](frontend/public/tubetome-extension.zip), and extract it.
+2. Navigate to `chrome://extensions` in your browser and toggle **Developer mode** (top right).
 3. Click **Load unpacked** and select the unzipped `tubetome-extension` folder.
-4. Open (or reload) https://tube-tome.vercel.app so the extension attaches to the page.
+4. Open (or refresh) [tube-tome.vercel.app](https://tube-tome.vercel.app) so the ext connects to the page.
 
-After updating the extension, click its reload icon on `chrome://extensions` **and** open a fresh tab of the site. Otherwise the old page script keeps running.
+> 💡 **Pro tip:** Whenever you update or edit extension files, click the **reload icon** on `chrome://extensions` **and** open a fresh tab of the site so the new scripts attach properly!
 
-### 2. Sign in
+### 2. Sign In
 
-Open the site and choose **Sign in** with your Google account. You must also be signed in to Google in the same browser profile so that NotebookLM can open.
+Open the web app and click **Sign in w/ Google**. Make sure you're logged into Google in the same browser profile so NotebookLM is ready to go!
 
-## Using TubeTome
+---
 
-1. Paste a playlist URL (`https://www.youtube.com/playlist?list=...`).
-2. Pick a selection mode: **All Videos**, **Specific Numbers**, or **Range**.
-3. Choose an action:
-   - **Extract Links** copies the video links to your clipboard.
-   - **Import to NotebookLM** creates the notebook through the extension.
-4. Wait for the confirmation message and open the notebook link it shows.
+## 🎮 Using TubeTome
 
-Start with a small selection (for example videos 1 to 4) the first time you try it.
+1. 📋 **Paste a playlist URL** (`https://www.youtube.com/playlist?list=...`).
+2. 🎛️ **Choose your selection mode:**
+   - **All Videos** — grab the whole batch.
+   - **Specific Numbers** — cherry-pick items like `1, 3, 7`.
+   - **Range** — select a slice like `1-10`.
+3. 🚀 **Choose an action:**
+   - **Extract Links** — copies cleaned video links straight to your clipboard.
+   - **Import to NotebookLM** — triggers the extension to build your notebook.
+4. 🎉 **Enjoy:** Watch the progress indicators, grab your notebook link when it pops up, and start querying your videos!
 
-> NotebookLM limits the number of sources per notebook (50 on the free plan). The site warns before importing more than 50 videos; use a range or specific positions to stay within your plan.
+> 💡 **First-time tip:** Start w/ a small test run (e.g. 2–4 videos) to see the magic in action.
+>
+> ⚠️ **NotebookLM limits:** NotebookLM currently caps free plans at **50 sources per notebook**. TubeTome will alert you if you pick >50 videos so you can trim down with a range.
 
-## Project structure
+---
 
+## 📂 Project Structure
+
+```text
+frontend/         💻 React + Vite web app (Three.js interactive visuals, Anime.js, Supabase auth)
+  public/         📦 Assets & tubetome-extension.zip (re-zip extension/ here after updates!)
+  src/            🎨 UI components, auth hooks, & extension bridge listeners
+backend/          ⚡ Express API deployed as a Vercel Serverless Function
+  server.js       🛡️ API routes, auth validation, CORS, CSRF, & rate limits
+  youtube.js      📺 Streamlined YouTube Data API v3 client (fetch-based, zero bloat)
+  api/index.js    🚀 Vercel entrypoint
+  src/security/   🔒 Request tracing, CSRF origin verification, & security telemetry
+extension/        🧩 Manifest V3 Chrome extension
+  bridge.js       🌉 Content script bridge; talks to web UI & handles version handshake
+  background.js   ⚙️ Service worker; manages tabs, validates YouTube URLs, & tracks lifecycle
+  notebooklm.js   🤖 DOM automation script inside notebooklm.google.com
+supabase/         🗄️ Database schemas, RLS policies, & auto-profile triggers
 ```
-frontend/     React + Vite web app (Supabase Google sign-in, Three.js background, Anime.js)
-  public/tubetome-extension.zip   downloadable build of extension/ (re-zip after every change)
-backend/      Express API deployed as a Vercel function
-  server.js     routes, auth, CORS, CSRF, rate limiting
-  youtube.js    YouTube Data API client
-  api/index.js  Vercel entry point
-  src/security/ request IDs, CSRF origin check, security-event logging
-extension/    Chrome extension (Manifest V3)
-  bridge.js     runs on the site; relays messages and reports the extension version
-  background.js service worker; validates links, opens the NotebookLM window, relays status
-  notebooklm.js runs inside NotebookLM; drives the UI to create the notebook
-supabase/     schema.sql: tables, row-level security, profile trigger
-```
 
-## Deployment
+---
 
-TubeTome runs as two Vercel projects, one for `frontend/` and one for `backend/`. There is no local server; deploy with the Vercel CLI from the relevant directory:
+## 🚢 Deployment
+
+TubeTome is configured to deploy seamlessly as two separate Vercel projects: one for `frontend/` and one for `backend/`.
+
+Deploy directly via Vercel CLI from the respective folder:
 
 ```bash
+# Deploy frontend or backend to production
 vercel deploy --prod
 ```
 
-The backend's `vercel.json` registers a daily cron job that calls `/healthz`, which pings Supabase so a free-tier project is not paused for inactivity.
+> ⏰ **Supabase keep-alive:** The backend `vercel.json` includes a daily cron pinging `/healthz` to keep free-tier Supabase DBs warm and prevent automatic inactivity pausing!
 
-### Supabase
+### 🗄️ Supabase & OAuth Setup
 
-1. Create a project and run [`supabase/schema.sql`](supabase/schema.sql) in the SQL editor.
-2. In Google Cloud Console, create an OAuth client (type *Web*) with the authorized redirect URI `https://<project-ref>.supabase.co/auth/v1/callback`.
-3. In Supabase, enable the Google provider under **Authentication → Providers** and paste the client ID and secret.
-4. Under **Authentication → URL Configuration**, set the Site URL to your site and add it to the redirect URLs.
+1. Spin up a Supabase project and execute [`supabase/schema.sql`](supabase/schema.sql) in the SQL Editor.
+2. In Google Cloud Console, create an OAuth 2.0 Web Client with the callback URL:  
+   `https://<project-ref>.supabase.co/auth/v1/callback`
+3. In Supabase, enable Google under **Authentication → Providers** and paste your Client ID & Secret.
+4. Under **Authentication → URL Configuration**, add your deployed URL (`https://tube-tome.vercel.app`) to Site URL & Redirect URLs.
 
-### Using a different domain
+### 🌐 Custom Domains
 
-The extension only runs on `tube-tome.vercel.app` and on NotebookLM. To use another site domain, add it to `matches` in [`extension/manifest.json`](extension/manifest.json) and to `SITE` in [`extension/background.js`](extension/background.js), then re-zip the extension.
+The extension is scoped to run on `tube-tome.vercel.app` and `notebooklm.google.com`. If you're hosting on a custom domain, remember to update `matches` in [`extension/manifest.json`](extension/manifest.json) and `SITE` in [`extension/background.js`](extension/background.js), then re-pack the zip.
 
-## Configuration
+---
 
-| Project  | Variable                 | Purpose                                                              |
-| -------- | ------------------------ | -------------------------------------------------------------------- |
-| frontend | `VITE_SUPABASE_URL`      | Supabase project URL                                                 |
-| frontend | `VITE_SUPABASE_ANON_KEY` | Supabase public (anon) key                                           |
-| frontend | `VITE_API_URL`           | Backend URL; also allowed in the site's Content Security Policy      |
-| backend  | `YOUTUBE_API_KEY`        | YouTube Data API v3 key (kept server-side)                           |
-| backend  | `SUPABASE_URL`           | Supabase project URL, used to verify user tokens                     |
-| backend  | `SUPABASE_ANON_KEY`      | Supabase public (anon) key                                           |
-| backend  | `KEEPALIVE_URL`          | Optional extra URL to ping from the daily cron                       |
-| backend  | `ALLOWED_ORIGINS`        | Optional comma-separated extra origins for CORS                      |
+## ⚙️ Configuration
 
-Templates are provided in [`frontend/.env.example`](frontend/.env.example) and [`backend/.env.example`](backend/.env.example). Set the values in each Vercel project's environment settings.
+Set these environment variables in your respective Vercel project dashboards:
 
-## Security and privacy
+| Scope | Variable | Purpose |
+| :--- | :--- | :--- |
+| `frontend` | `VITE_SUPABASE_URL` | Supabase project URL |
+| `frontend` | `VITE_SUPABASE_ANON_KEY` | Supabase public (anon) API key |
+| `frontend` | `VITE_API_URL` | Backend URL (whitelisted in site CSP) |
+| `backend` | `YOUTUBE_API_KEY` | YouTube Data API v3 key (secure server-side) |
+| `backend` | `SUPABASE_URL` | Supabase project URL (token verification) |
+| `backend` | `SUPABASE_ANON_KEY` | Supabase anon key |
+| `backend` | `KEEPALIVE_URL` | *(Optional)* Extra healthcheck endpoint for cron |
+| `backend` | `ALLOWED_ORIGINS` | *(Optional)* Comma-separated extra CORS origins |
 
-| Concern             | How it is handled                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Google credentials  | Never leave your browser. The extension acts only inside your own NotebookLM window.                       |
-| Extension input     | The background script accepts only `https://www.youtube.com/watch?v=...` links, at most 500 per import.     |
-| Extension scope     | Permissions are limited to `storage` and `accounts.google.com`; content scripts run only on the site and NotebookLM. |
-| API access          | Every backend route requires a valid Supabase JWT. CORS, CSRF origin checks, rate limiting, and Helmet are enabled. |
-| YouTube API key     | Stored server-side only.                                                                                   |
-| User data           | Supabase row-level security: users can read only their own profile and import history.                     |
+> 📝 Check out [`frontend/.env.example`](frontend/.env.example) and [`backend/.env.example`](backend/.env.example) for ready-to-copy templates.
 
-## Troubleshooting
+---
 
-| Symptom | What to do |
-| ------- | ---------- |
-| The site says to install the extension although it is installed | Open a fresh tab of the site. Chrome injects extensions only into pages loaded after installation. |
-| "The extension is not responding" or "out of date" | Reload the extension at `chrome://extensions`, then open a fresh tab of the site. |
-| "Could not find … NotebookLM's layout may have changed" | NotebookLM's interface changed. Click **Copy diagnostics** and include it in an issue, or adjust the text patterns in [`extension/notebooklm.js`](extension/notebooklm.js), re-zip, and reload the extension. |
-| A NotebookLM window comes forward | Google needs you to sign in, or a step failed and the window was left open for inspection. Sign in and the import continues automatically. |
-| Sign-in fails | The page shows Supabase's error message. Check the Google provider settings and redirect URLs. |
+## 🛡️ Security & Privacy
 
-## Limitations
+We treat security and privacy as non-negotiables:
 
-- The import automates NotebookLM's web interface, because NotebookLM has no public API for personal accounts. If Google changes that interface, the extension may need an update.
-- The extension must be installed manually until it is listed on the Chrome Web Store.
-- Only Chromium-based browsers that support Manifest V3 extensions are supported.
+| Concern | How TubeTome Handles It |
+| :--- | :--- |
+| 🔑 **Google Credentials** | Never leave your machine. The extension drives NotebookLM strictly within your existing browser session. |
+| 🛡️ **Extension Input** | Strictly validates input URLs: only `https://www.youtube.com/watch?v=...` links are accepted (max 500 per run). |
+| 🔒 **Least-Privilege Scopes** | Extension permissions are limited to `storage` and `accounts.google.com`. Content scripts inject only into the site and NotebookLM. |
+| 🛑 **API Protection** | Every backend endpoint enforces Supabase JWT verification, strict CORS, CSRF origin verification, Helmet HTTP headers, & rate limits. |
+| 📺 **YouTube API Key** | Kept strictly on the backend — never exposed to the client. |
+| 👤 **User Data Isolation** | Full Postgres Row-Level Security (RLS): users can only query and modify their own records. |
 
-## Tech stack
+---
 
-React 18 · Vite · Three.js · Anime.js · Express · Supabase (Google OAuth, Postgres, row-level security) · YouTube Data API v3 · Chrome Extension (Manifest V3) · Vercel
+## 🔧 Troubleshooting
+
+| Issue | Quick Fix |
+| :--- | :--- |
+| ❓ **Site prompts to install extension, but it's already installed** | Open a fresh tab! Chrome only injects content scripts into pages loaded *after* the extension is installed/reloaded. |
+| ⏱️ **"Extension not responding" or "out of date"** | Go to `chrome://extensions`, click the 🔁 reload button on TubeTome, and reload the web app tab. |
+| 🔍 **"Could not find … NotebookLM's layout may have changed"** | Google may have updated NotebookLM's DOM. Click **Copy diagnostics** to copy the error dump for a bug report, or update the selectors in [`extension/notebooklm.js`](extension/notebooklm.js). |
+| 🪟 **NotebookLM window pops up into focus** | Google might need you to re-authenticate, or an error occurred and the window stayed open for you to check. Just finish signing in and the import will resume! |
+| 🚫 **Sign-in fails** | Inspect the Supabase error popup. Double-check your Google OAuth credentials and redirect URIs in the Supabase dashboard. |
+
+---
+
+## ⚠️ Limitations & Gotchas
+
+- **DOM-Driven Automation:** NotebookLM currently lacks a public API for personal accounts. TubeTome automates the web UI, meaning Google UI redesigns might occasionally require selector updates.
+- **Manual Extension Install:** Until TubeTome hits the Chrome Web Store, manual loading via `chrome://extensions` is required.
+- **Chromium Only:** Requires Chromium-based browsers (Chrome, Brave, Edge, Arc) supporting Manifest V3.
+
+---
+
+## 🧰 Tech Stack
+
+- **Frontend:** React 18 · Vite · Three.js · Anime.js · Vanilla CSS
+- **Backend:** Express · Node.js · Vercel Serverless Functions
+- **Auth & DB:** Supabase (Google OAuth, PostgreSQL, Row-Level Security)
+- **APIs & Ext:** YouTube Data API v3 · Chrome Extension (Manifest V3)
+- **Deployment:** Vercel (CI/CD, Serverless, Cron Jobs)
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ for curious minds, researchers, and playlist hoarders everywhere.</sub>
+</div>
